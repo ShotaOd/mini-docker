@@ -51,6 +51,25 @@ VERSION="20.10 (Groovy Gorilla)"
 # ./bocker run ubuntu /bin/bash
 ```
 
+### NATの設定
+ip forwardの有効化
+```bash
+# echo 1 > /proc/sys/net/ipv4/ip_forward
+# cat /proc/sys/net/ipv4/ip_forward
+```
+
+NATの設定
+```bash
+# iptables --table nat --list
+# iptables --table nat --append POSTROUTING --source 192.168.0.0/24 --jump MASQUERADE
+# iptables --table nat --list
+```
+
+route
+```bash
+ip route add default via 10.0.2.2
+```
+
 #### 各種動作確認
 
 ##### hostとコンテナでPID名前空間が分離されている

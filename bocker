@@ -4,15 +4,33 @@ import re
 import click
 import sys
 
-from commands.pull_command import run_pull
-from commands.run_command import run_run
-
+from commands.clean import run_clean
+from commands.pull import run_pull
+from commands.run import run_run
+from commands.images import run_images
+from commands.network import run_network
 
 IMAGE_TAG_PATTERN = r'(?P<image>[^/:]+)(:)?(?P<tag>[^/:]*)'
 
 @click.group()
 def cli():
     pass
+
+
+@click.command()
+def clean():
+    run_clean()
+
+
+@click.command()
+def images():
+    run_images()
+
+
+@click.command()
+def network():
+    run_network()
+
 
 @click.command()
 @click.argument('image_name')
@@ -29,7 +47,7 @@ def pull(image_name):
 @click.argument('image_name', required=True)
 @click.option('--cpus', help='Number of CPUs', default=None, type=float)
 @click.option('--memory',help='Memory limit in bytes.', default=None)
-@click.argument('command', required=True, nargs=-1)
+@click.argument('command', nargs=-1)
 def run(image_name, cpus, memory, command):
     match = re.match(IMAGE_TAG_PATTERN, image_name)
     if not match:
@@ -39,7 +57,11 @@ def run(image_name, cpus, memory, command):
     tag = match.group('tag') if match.group('tag') else 'latest'
     run_run(image, tag, cpus, memory, command)
 
+
+cli.add_command(clean)
+cli.add_command(images)
 cli.add_command(pull)
+cli.add_command(network)
 cli.add_command(run)
 
 if __name__ == '__main__':

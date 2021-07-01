@@ -20,7 +20,7 @@ Vagrant.configure("2") do |config|
   config.vm.provision "shell", inline: <<-EOL
     apt update
     apt upgrade
-    apt install -y python3-distutils python3-pip
+    apt install -y python3-distutils python3-pip bridge-utils
     pip3 install pipenv
   EOL
 end
