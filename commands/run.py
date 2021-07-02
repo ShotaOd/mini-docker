@@ -1,126 +1,117 @@
-import stat
 import os
 import subprocess
+import traceback
 import uuid
 from dataclasses import dataclass
-from typing import List
+from typing import List, Callable
+
+import cgroups
+import linux
+from pyroute2 import netns as NetNs
 
 import commands.format as fmt
 import commands.images as img
-
-import traceback
-import linux
-import cgroups
+import commands.network as net
 
 CONTAINER_DATA_DIR = '/var/opt/app/container'
 
+
 @dataclass(frozen=True)
-class ContainerDir:
+class Container:
+    id: str
     root_dir: str
-    rw_dir: str
-    work_dir: str
 
 
-def _init_container_dir(container_id: str) -> ContainerDir:
-    root_dir = os.path.join(CONTAINER_DATA_DIR, container_id)
-    rootfs_dir = os.path.join(root_dir, 'rootfs')
+def _init_container(image: img.Image, tag: str) -> Container:
+    id = f'{image.name.replace("/", "-")}_{tag}_{uuid.uuid4()}'
+    root_dir = os.path.join(CONTAINER_DATA_DIR, id)
     rw_dir = os.path.join(root_dir, 'cow_rw')
     work_dir = os.path.join(root_dir, 'cow_workdir')
 
-    for d in (rootfs_dir, rw_dir, work_dir):
+    for d in (rw_dir, work_dir):
         if not os.path.exists(d):
             os.makedirs(d)
 
-    return ContainerDir(root_dir=root_dir, rw_dir=rw_dir, work_dir=work_dir)
+    # docker image ディレクトリを overlayfs としてマウント
+    # See: https://gihyo.jp/admin/serial/01/linux_containers/0018
+    # See: https://tech-lab.sios.jp/archives/21103
+    print('mounting docker image directory')
+    print(image.content_dir)
+    linux.mount(
+        'overlay',
+        root_dir,
+        'overlay',
+        linux.MS_NODEV,
+        f"lowerdir={image.content_dir},upperdir={rw_dir},workdir={work_dir}"
+    )
+
+    return Container(id=id, root_dir=root_dir)
 
 
-def _run_in_process(
-        image: img.Image,
-        container_id: str,
-        container_dir: ContainerDir,
-        cpus: float,
-        memory: str,
-        override_command: List[str]):
-    try:
-        pid = os.getpid()
+def setup(image: img.Image, container: Container, **kwargs) -> Callable[[], None]:
+    def pre_exec():
+        try:
+            container_id = container.id
+            pid = os.getpid()
+            cpus = kwargs['cpus']
+            memory = kwargs['memory']
+            netns = kwargs['netns']
+            override_cmd = kwargs['override_cmd']
 
-        # control group の設定
-        cg = cgroups.Cgroup(container_id)
-        cg.set_cpu_limit(cpus)
-        cg.set_memory_limit(memory)
-        cg.add(pid)
+            # hostnameの設定
+            print(f'set hostname {container_id}')
+            linux.sethostname(container_id)
 
-        # コンテナにホスト名をセット
-        linux.sethostname(container_id)
+            # network namespace を設定
+            print(f'set network namespace {netns}')
+            NetNs.setns(netns)
 
-        # ルートディレクトリをプライベートにマウント
-        # See: https://kernhack.hatenablog.com/entry/2015/05/30/115705
-        # print('mounting / privately')
-        # linux.mount(None, '/', None, linux.MS_PRIVATE | linux.MS_REC, '')
+            # control group の設定
+            print(f'set control group')
+            cg = cgroups.Cgroup(container_id)
+            cg.set_cpu_limit(cpus)
+            cg.set_memory_limit(memory)
+            cg.add(pid)
 
-        # docker image ディレクトリを overlayfs としてマウント
-        # See: https://gihyo.jp/admin/serial/01/linux_containers/0018
-        # See: https://tech-lab.sios.jp/archives/21103
-        print('mounting docker image directory')
-        print(image.content_dir)
-        linux.mount(
-            'overlay',
-            container_dir.root_dir,
-            'overlay',
-            linux.MS_NODEV,
-            f"lowerdir={image.content_dir},upperdir={container_dir.rw_dir},workdir={container_dir.work_dir}"
-        )
+            # proc, sys, dev の linux システムディレクトリの作成
+            proc_dir = os.path.join(container.root_dir, 'proc') # proc: PIDなどプロセスの情報
+            sys_dir = os.path.join(container.root_dir, 'sys')   # sys: ドライバ関連のプロセスの情報
+            dev_dir = os.path.join(container.root_dir, 'dev')   # dev: CPUやメモリなど基本デバイス
+            for d in (proc_dir, sys_dir, dev_dir):
+                if not os.path.exists(d):
+                    os.makedirs(d)
 
-        # proc, sys, dev の linux システムディレクトリの作成
-        # proc_dir = os.path.join(container_dir.root_dir, 'proc') # proc: PIDなどプロセスの情報
-        # sys_dir = os.path.join(container_dir.root_dir, 'sys')   # sys: ドライバ関連のプロセスの情報
-        # dev_dir = os.path.join(container_dir.root_dir, 'dev')   # dev: CPUやメモリなど基本デバイス
-        # for d in (proc_dir, sys_dir, dev_dir):
-        #     if not os.path.exists(d):
-        #         os.makedirs(d)
+            # システムディレクトリのマウント
+            print('mounting /proc, /sys, /dev, /dev/pts')
+            linux.mount('proc', proc_dir, 'proc', 0, '')
+            linux.mount('sysfs', sys_dir, 'sysfs', 0, '')
+            # linux.mount('tmpfs', dev_dir, 'tmpfs', linux.MS_NOSUID | linux.MS_STRICTATIME, 'mode=755')
 
-        # システムディレクトリのマウント
-        # print('mounting /proc, /sys, /dev, /dev/pts')
-        # linux.mount('proc', proc_dir, 'proc', 0, '')
-        # linux.mount('sysfs', sys_dir, 'sysfs', 0, '')
-        # linux.mount('tmpfs', dev_dir, 'tmpfs', linux.MS_NOSUID | linux.MS_STRICTATIME, 'mode=755')
+            # root directory の設定
+            print(f'set root directory {container.root_dir}')
+            os.chroot(container.root_dir)
 
-        # print('mounting devices')
-        # for i, dev in enumerate(['stdin', 'stdout', 'stderror']):
-        #     os.symlink(f'/proc/self/fd/{i}', os.path.join(dev_dir, dev))
-        # devices = {'null': (stat.S_IFCHR, 1, 3), 'zero': (stat.S_IFCHR, 1, 5),
-        #            'random': (stat.S_IFCHR, 1, 8), 'urandom': (stat.S_IFCHR, 1, 9),
-        #            'console': (stat.S_IFCHR, 136, 1), 'tty': (stat.S_IFCHR, 5, 0),
-        #            'full': (stat.S_IFCHR, 1, 7)}
-        # for device, (dev_type, major, minor) in devices.items():
-        #     os.mknod(os.path.join(dev_dir, device), 0o666 | dev_type, os.makedev(major, minor))
+            # current directory の設定
+            os.chdir(os.path.expanduser('~'))
 
-        # コンテナのルートディレクトリを変更
-        # print('changing container root directory')
-        # old_root = os.path.join(container_dir.root_dir, 'old_root')
-        # os.makedirs(old_root)
-        # linux.pivot_root(container_dir.root_dir, old_root)
-        # os.chdir('/')
-        # linux.umount2('/old_root', linux.MNT_DETACH)
-        # os.rmdir('/old_root')
-        os.chroot(container_dir.root_dir)
-        os.chdir(os.path.expanduser('~'))
+            # commandの解決
+            cmd = list(override_cmd) if len(override_cmd) > 0 else image.cmd
 
-        command = override_command if len(override_command) > 0 else image.cmd
+            os.execvp(cmd[0], cmd)
+            print(f'🏃️💨 {fmt.GREEN}Docker container {container.id} started! executing {cmd[0]}{fmt.END}')
 
-        print(f'🏃️💨 {fmt.GREEN}Docker container {container_id} started! executing {command[0]}{fmt.END}')
-        os.execvp(command[0], command)
+        except Exception as e:
+            print(f'''
+    {fmt.RED}{type(e).__name__}
+    {e}{fmt.END}
+            ''')
+            traceback.print_exc()
+            exit(1)
 
-    except Exception as e:
-        print(f'''
-{fmt.RED}{type(e).__name__}
-{e}{fmt.END}
-        ''')
-        traceback.print_exc()
-        exit(1)
+    return pre_exec
 
 
-def run_run(image: str, tag: str, cpus: float, memory: str, command: List[str]):
+def run_run(image: str, tag: str, cpus: float, memory: str, override_command: List[str]):
     print(f'Start running {image}:{tag} ...')
     print(f'cpus={cpus}, memory={memory}')
 
@@ -129,23 +120,28 @@ def run_run(image: str, tag: str, cpus: float, memory: str, command: List[str]):
     if target_image is None:
         raise FileNotFoundError(f'{image}:{tag} not found')
 
-    id = uuid.uuid4()
-    container_id = f'{image}_{tag}_{id}'
-    container_dir = _init_container_dir(container_id)
+    # networkの初期化
+    netns = net.init_container_netns()
+
+    # containerの初期化
+    container = _init_container(target_image, tag)
+
+    # container process の 準備
+    param = {'cpus': cpus, 'memory': memory, 'netns': netns, 'override_cmd': override_command}
+    pre_exec = setup(target_image, container, **param)
 
     # 分離させる名前空間のフラグ
     # See: https://gihyo.jp/admin/serial/01/linux_containers/0002
     flags = (
-        linux.CLONE_NEWPID | # PID名前空間: プロセスIDの分離。異なる名前空間同士では、同一のプロセスIDを持つことが可能になる
-        linux.CLONE_NEWUTS | # UTS名前空間: ホスト名, ドメイン名の分離
-        linux.CLONE_NEWNS  | # マウント名前空間: ファイルシステムのマウントポイントの分離
-        linux.CLONE_NEWNET   # ネットワーク名前空間: 分離されたネットワークスタックを提供する
+            linux.CLONE_NEWPID |  # PID名前空間: プロセスIDの分離。異なる名前空間同士では、同一のプロセスIDを持つことが可能になる
+            linux.CLONE_NEWUTS |  # UTS名前空間: ホスト名, ドメイン名の分離
+            linux.CLONE_NEWNS  |  # マウント名前空間: ファイルシステムのマウントポイントの分離
+            linux.CLONE_NEWNET    # ネットワーク名前空間: 分離されたネットワークスタックを提供する
     )
 
     # 子プロセスを作成。コンテナとして立ち上げる
     # See: https://linuxjm.osdn.jp/html/LDP_man-pages/man2/clone.2.html
-    pid = linux.clone(_run_in_process, flags, (target_image, container_id, container_dir, cpus, memory, command))
-
+    pid = linux.clone(pre_exec, flags, ())
     print(f'container process ID: {pid}')
 
     _, status = os.waitpid(pid, 0)

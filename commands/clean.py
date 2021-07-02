@@ -1,5 +1,5 @@
-from commands.network import run_network_clean
+from commands.network import network_clean
 
 
 def run_clean():
-    run_network_clean()
+    network_clean()

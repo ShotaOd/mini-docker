@@ -1,17 +1,22 @@
 import subprocess
+from dataclasses import dataclass
 
 from pyroute2 import netns, NDB
 
 
-# https://github.com/ldx/python-iptables/issues/37
-# XTABLES_LIBDIR to iptables
-# import iptc
+@dataclass
+class Bridge:
+    ip: str
+    name: str
 
-def _init_bridge(ndb: NDB):
+
+def _init_bridge(ndb: NDB) -> Bridge:
+    gw = '192.168.0.1'
     bridge_name = 'br-container'
+    bridge = Bridge(ip=gw, name=bridge_name)
 
     if ndb.interfaces.exists(bridge_name):
-        return bridge_name
+        return bridge
 
     print(f'  create bridge for container network "{bridge_name}"')
 
@@ -22,44 +27,10 @@ def _init_bridge(ndb: NDB):
 
     (ndb.interfaces[bridge_name]
      .set(state='up')
-     .commit())
-
-    return bridge_name
-
-
-def _init_host_peer(ndb: NDB, bridge_name: str):
-    gw = '192.168.0.1'
-    veth_br = 'v0br'
-    veth_peer = 'v0p'
-
-    if ndb.interfaces.exists(veth_br):
-        return gw
-
-    # bridge ~ host の virtual ethernet を作成
-    print(f'  create virtual ethernet between [BRIDGE][{veth_br}] ~ [HOST](peer:{veth_peer})')
-    (ndb.interfaces
-     .create(ifname=veth_br,
-             kind='veth',
-             peer=veth_peer)
-     .commit())
-
-    # brige用のinterfaceを、bridgeに追加
-    ndb.interfaces[bridge_name].add_port(veth_br).commit()
-
-    # bridge側の interfaceを起動
-    (ndb.interfaces
-     .wait(ifname=veth_br)
-     .set(state='up')
-     .commit())
-
-    # peer側の interfaceを起動
-    (ndb.interfaces
-     .wait(ifname=veth_peer)
-     .set(state='up')
      .add_ip(f'{gw}/24')
      .commit())
 
-    return gw
+    return bridge
 
 
 def _init_netns():
@@ -74,7 +45,7 @@ def _init_netns():
 
 def _init_container_peer(ndb: NDB, bridge: str, netns_name: str):
     bridge_ifs = [i for i in ndb.interfaces if i['slave_kind'] == 'bridge']
-    network_idx = len(bridge_ifs) + 1
+    network_idx = len(bridge_ifs) + 2
 
     veth_br = f'v{network_idx}br'
     veth_container = f'v{network_idx}p'
@@ -113,35 +84,34 @@ def _init_gw_route(netns: str, gw: str):
 
 
 def _clean(ndb: NDB):
-    bridge_name = _init_bridge(ndb)
+    bridge = _init_bridge(ndb)
 
-    for p in ndb.interfaces[bridge_name].ports:
+    for p in ndb.interfaces[bridge.name].ports:
         ifname = p['ifname']
         print(f'delete [veth]({ifname}) in bridge')
         ndb.interfaces[ifname].remove().commit()
 
     for ns in netns.listnetns():
-        if (ns.startswith('container-ns-')):
+        if ns.startswith('container-ns-'):
             print(f'delete netns "{ns}"')
             netns.remove(ns)
 
-    ndb.interfaces[bridge_name].remove().commit()
+    ndb.interfaces[bridge.name].remove().commit()
 
 
-def run_network_clean():
+def network_clean():
     with NDB(log='on') as ndb:
         _clean(ndb)
 
 
-def run_network(container_pid: int):
-    netns_name = _init_netns()
-    net_ns_fd = open(f'/proc/{container_pid}/ns/net').fileno()
-
+def init_container_netns() -> str:
     with NDB(log='on') as ndb:
-        print('initialize required host-container network')
-        bridge_name = _init_bridge(ndb)
-        gw = _init_host_peer(ndb, bridge_name)
+        print('initialize required host bridge network')
+        bridge = _init_bridge(ndb)
 
         print('initialize each container network')
-        _init_container_peer(ndb, bridge_name, netns_name)
-        _init_gw_route(netns_name, gw)
+        netns_name = _init_netns()
+        _init_container_peer(ndb, bridge.name, netns_name)
+        _init_gw_route(netns_name, bridge.ip)
+
+        return netns_name
