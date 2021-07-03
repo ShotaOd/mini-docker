@@ -12,7 +12,7 @@ Vagrant.configure("2") do |config|
 
   config.vm.network "private_network", type: "dhcp"
 
-  (50000...51000).each { |port|
+  (50000...50010).each { |port|
     config.vm.network :forwarded_port, guest: port, host: port
   }
 
@@ -23,10 +23,5 @@ Vagrant.configure("2") do |config|
     vb.memory = "1024"
   end
   
-  config.vm.provision "shell", inline: <<-EOL
-    apt update
-    apt upgrade
-    apt install -y python3-distutils python3-pip bridge-utils cgroup-tools
-    pip3 install pipenv
-  EOL
+  config.vm.provision "shell", path: "provisioner.sh"
 end

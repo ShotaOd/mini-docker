@@ -1,6 +1,17 @@
 #!/usr/bin/env sh
 
-set -e
+set -ex
+
+cat <<EOF
+------------------------------
+install required packages
+------------------------------
+EOF
+
+apt update
+apt upgrade -y
+apt install -y python3-distutils python3-pip bridge-utils cgroup-tools
+pip3 install pipenv
 
 cat <<EOF
 ------------------------------
