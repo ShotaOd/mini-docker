@@ -12,3 +12,11 @@ UNDERLINE = '\033[4m'
 INVISIBLE = '\033[08m'
 REVERCE = '\033[07m'
 
+
+def sizeof_fmt(num, suffix='B'):
+    # http://stackoverflow.com/questions/1094841/reusable-library-to-get-human-readable-version-of-file-size
+    for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
+        if abs(num) < 1024.0:
+            return "%3.1f%s%s" % (num, unit, suffix)
+        num /= 1024.0
+    return "%.1f%s%s" % (num, 'Yi', suffix)

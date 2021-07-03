@@ -6,8 +6,10 @@ from typing import Iterable
 
 import requests
 
-import commands.format as colors
+from commands import parse_image_str
 import commands.config as config
+import commands.format as colors
+
 
 def _fetch_auth_token(library: str, image: str) -> str:
     token_url = f'https://auth.docker.io/token?service=registry.docker.io&scope=repository:{library}/{image}:pull'
@@ -38,7 +40,7 @@ def _fetch_layer(library: str, image: str, layer_digest: str, token: str) -> Ite
 
 def run_pull(image: str, tag: str):
     print(f'Pulling {image}:{tag} ...')
-    library = 'library'
+    (library, image) = parse_image_str(image)
 
     # Docker Hub からアクセストークンを取得
     # See also: https://docs.docker.com/registry/spec/auth/jwt/

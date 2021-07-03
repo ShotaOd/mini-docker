@@ -1,5 +1,4 @@
 import os
-import subprocess
 import traceback
 import uuid
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ import cgroups
 import linux
 from pyroute2 import netns as NetNs
 
+from commands import parse_image_str
 import commands.format as fmt
 import commands.images as img
 import commands.network as net
@@ -91,14 +91,18 @@ def setup(image: img.Image, container: Container, **kwargs) -> Callable[[], None
             print(f'set root directory {container.root_dir}')
             os.chroot(container.root_dir)
 
-            # current directory の設定
-            os.chdir(os.path.expanduser('~'))
+            # working directory の設定
+            if image.working_dir:
+                print(f'set working directory {image.working_dir}')
+                os.chdir(image.working_dir)
+            else:
+                os.chdir('/')
 
             # commandの解決
-            cmd = list(override_cmd) if len(override_cmd) > 0 else image.cmd
-
-            os.execvp(cmd[0], cmd)
-            print(f'🏃️💨 {fmt.GREEN}Docker container {container.id} started! executing {cmd[0]}{fmt.END}')
+            cmd = override_cmd if len(override_cmd) > 0 else image.cmd
+            if cmd:
+                os.execvp(cmd[0], cmd)
+                print(f'🏃️💨 {fmt.GREEN}Docker container {container.id} started! executing {cmd[0]}{fmt.END}')
 
         except Exception as e:
             print(f'''
@@ -111,17 +115,18 @@ def setup(image: img.Image, container: Container, **kwargs) -> Callable[[], None
     return pre_exec
 
 
-def run_run(image: str, tag: str, cpus: float, memory: str, override_command: List[str]):
+def run_run(image: str, tag: str, cpus: float, memory: str, source: int, dest: int, override_command: List[str]):
     print(f'Start running {image}:{tag} ...')
-    print(f'cpus={cpus}, memory={memory}')
+    print(f'cpus={cpus}, memory={memory}, port={source}:{dest}')
 
+    (library, image) = parse_image_str(image)
     # イメージの検索・取得
-    target_image = next((v for v in img.find_images() if v.name == f'library/{image}' and v.version == tag), None)
+    target_image = next((v for v in img.find_images() if v.name == f'{library}/{image}' and v.version == tag), None)
     if target_image is None:
         raise FileNotFoundError(f'{image}:{tag} not found')
 
     # networkの初期化
-    netns = net.init_container_netns()
+    netns = net.init_container_network(source=source, dest=dest)
 
     # containerの初期化
     container = _init_container(target_image, tag)

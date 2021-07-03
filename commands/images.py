@@ -1,26 +1,27 @@
 import json
 import os
-import subprocess
-
 from dataclasses import dataclass
+from typing import List, Optional
+
 from terminaltables import AsciiTable
 
 import commands.config as config
+from commands.format import sizeof_fmt
 
-from typing import List
 
-
-@dataclass
+@dataclass(frozen=True)
 class Image:
     name: str
     version: str
     size: int
     cmd: List[str]
     dir: str
+    working_dir: Optional[str]
 
     @property
     def content_dir(self):
         return os.path.join(self.dir, 'contents')
+
 
 def find_images() -> List[Image]:
     images = []
@@ -39,9 +40,14 @@ def find_images() -> List[Image]:
         # デフォルトのコマンドを取得する
         state = json.loads(manifest['history'][0]['v1Compatibility'])
         cmd = state['config']['Cmd']
+
+        # working dirを取得する
+        working_dir = state['config']['WorkingDir']
+        working_dir = working_dir if working_dir else None
+
         # print(json.dumps(manifest, indent=2))
 
-        image = Image(manifest['name'], manifest['tag'], size, cmd, image_dir)
+        image = Image(manifest['name'], manifest['tag'], size, cmd, image_dir, working_dir)
         images.append(image)
 
     return images
@@ -53,12 +59,3 @@ def run_images():
     data = header + [[img.name, img.version, sizeof_fmt(img.size), img.dir] for img in images]
     table = AsciiTable(data)
     print(table.table)
-
-
-def sizeof_fmt(num, suffix='B'):
-    # http://stackoverflow.com/questions/1094841/reusable-library-to-get-human-readable-version-of-file-size
-    for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
-        if abs(num) < 1024.0:
-            return "%3.1f%s%s" % (num, unit, suffix)
-        num /= 1024.0
-    return "%.1f%s%s" % (num, 'Yi', suffix)
