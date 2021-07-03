@@ -191,12 +191,80 @@ yes > /dev/null
 # ---> Killed
 ```
 
-#### 同一ポートを複数コンテナで起動できる
+### ネットワーク名前空間の分離
 
-- echo server を pull
+#### ネットワーク名前空間の確認
+
+- terminalを2つ用意
+  - *host*
+  - *container 1*
+  - *container 2*
+
+*container 1*
+
 ```bash
-./mini-docker pull hashicorp/http-echo
+sudo su -
+cd /vagrant
+
+./mini-docker run alpine
+ip addr
+
+# --->
+# 1: lo: <LOOPBACK> mtu 65536 qdisc noop qlen 1000
+#     link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+# 2: v8p@if26: <BROADCAST,MULTICAST,UP,LOWER_UP,M-DOWN> mtu 1500 qdisc noqueue qlen 1000
+#     link/ether 6a:95:d9:da:11:ca brd ff:ff:ff:ff:ff:ff
+#     inet 192.168.0.8/24 scope global v8p
+#        valid_lft forever preferred_lft forever
+#     inet6 fe80::6895:d9ff:feda:11ca/64 scope link
+#        valid_lft forever preferred_lft forever
 ```
+
+*container 2*
+
+```bash
+sudo su -
+cd /vagrant
+
+./mini-docker run alpine
+ip addr
+
+# --->
+# 1: lo: <LOOPBACK> mtu 65536 qdisc noop state DOWN qlen 1000
+#     link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00```
+# 2: v11p@if29: <BROADCAST,MULTICAST,UP,LOWER_UP,M-DOWN> mtu 1500 qdisc noqueue state UP qlen 1000
+#     link/ether a6:0a:06:39:11:35 brd ff:ff:ff:ff:ff:ff#### 同一ポートを複数コンテナで起動できる
+#     inet 192.168.0.11/24 scope global v11p
+#        valid_lft forever preferred_lft forever- echo server を pull
+#     inet6 fe80::a40a:6ff:fe39:1135/64 scope link```bash
+#        valid_lft forever preferred_lft forever./mini-docker pull hashicorp/http-echo
+```
+
+*host*
+
+- containerから、bridgeへ疎通ができる
+
+```bash
+ip netns exec container-ns-1 ping 192.168.0.1
+# PING 192.168.0.1 (192.168.0.1) 56(84) bytes of data.
+# 64 bytes from 192.168.0.1: icmp_seq=1 ttl=64 time=0.050 ms
+# 64 bytes from 192.168.0.1: icmp_seq=2 ttl=64 time=0.052 ms
+^C
+# --- 192.168.0.1 ping statistics ---
+```
+
+- container1から、container2へ疎通ができる
+
+```bash
+ip netns exec container-ns-2 ping 192.168.0.3
+# PING 192.168.0.1 (192.168.0.3) 56(84) bytes of data.
+# 64 bytes from 192.168.0.3: icmp_seq=1 ttl=64 time=0.050 ms
+# 64 bytes from 192.168.0.3: icmp_seq=2 ttl=64 time=0.052 ms
+^C
+# --- 192.168.0.1 ping statistics ---
+```
+
+#### 異なるネットワーク名前空間で、重複したportで起動できる
 
 - vagrant instance の ip を取得する
 ```bash
