@@ -58,8 +58,6 @@ cd /vagrant
 
 ### コンテナ環境のclean
 
-> todo clean mount point 
-
 ```
 ./mini-docker clean
 ```
