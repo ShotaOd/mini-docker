@@ -6,7 +6,6 @@ from typing import Iterable
 
 import requests
 
-from commands import parse_image_str
 import commands.config as config
 import commands.format as colors
 
@@ -38,20 +37,19 @@ def _fetch_layer(library: str, image: str, layer_digest: str, token: str) -> Ite
             yield chunk
 
 
-def run_pull(image: str, tag: str):
-    print(f'Pulling {image}:{tag} ...')
-    (library, image) = parse_image_str(image)
+def run_pull(registry: str, image: str, tag: str):
+    print(f'pulling {registry}/{image}:{tag} ...')
 
     # Docker Hub からアクセストークンを取得
     # See also: https://docs.docker.com/registry/spec/auth/jwt/
-    token = _fetch_auth_token(library, image)
+    token = _fetch_auth_token(registry, image)
 
     if not os.path.exists(config.IMAGE_DIR):
         os.makedirs(config.IMAGE_DIR)
 
     # 指定した Docker image のマニフェストを取得して保存
     # See also: https://docs.docker.com/registry/spec/manifest-v2-2/
-    manifest = _fetch_manifest(library, image, tag, token)
+    manifest = _fetch_manifest(registry, image, tag, token)
 
     image_name = f"{manifest['name'].replace('/', '_')}_{manifest['tag']}"
     image_base_dir = os.path.join(config.IMAGE_DIR, image_name)
@@ -78,7 +76,7 @@ def run_pull(image: str, tag: str):
         # layerごとに保存
         layer_tar_name = f'{os.path.join(image_layers_path, digest)}.tar'
         with open(layer_tar_name, 'wb') as tar:
-            for chunk in _fetch_layer(library, image, digest, token):
+            for chunk in _fetch_layer(registry, image, digest, token):
                 if chunk:
                     tar.write(chunk)
         # ファイルは統合する

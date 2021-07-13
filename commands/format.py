@@ -1,3 +1,6 @@
+import re
+import sys
+
 BLACK = '\033[30m'
 RED = '\033[31m'
 GREEN = '\033[32m'
@@ -20,3 +23,23 @@ def sizeof_fmt(num, suffix='B'):
             return "%3.1f%s%s" % (num, unit, suffix)
         num /= 1024.0
     return "%.1f%s%s" % (num, 'Yi', suffix)
+
+
+IMAGE_TAG_PATTERN = r'(?P<image>[^:]+)(:)?(?P<tag>[^/:]*)'
+PORT_PATTERN = r'(?P<source>\d+):(?P<dest>\d+)'
+
+
+# return (registry, image, tag)
+def parse_image_opt(option) -> (str, str, str):
+    match = re.match(IMAGE_TAG_PATTERN, option)
+    if not match:
+        print('invalid image name')
+        sys.exit(1)
+    image = match.group('image')
+    tag = match.group('tag') if match.group('tag') else 'latest'
+
+    if '/' in image:
+        last_idx = image.rfind('/')
+        return image[:last_idx], image[last_idx + 1:], tag
+    else:
+        return 'library', image, tag

@@ -126,7 +126,7 @@ def network_clean():
     _reset_iptables()
 
 
-def init_container_network(source: int, dest: int) -> str:
+def init_container_network(source: int = None, dest: int = None) -> str:
     with NDB(log='on') as ndb:
         print('initialize required host bridge network')
         bridge = _init_bridge(ndb)

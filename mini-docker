@@ -1,28 +1,19 @@
 #!/usr/bin/python3
 
+import click
 import re
 import sys
 
-import click
-
-from commands.clean import run_clean
+import commands.format as fmt
 from commands.images import run_images
 from commands.network import init_container_network
 from commands.pull import run_pull
 from commands.run import run_run
 
-IMAGE_TAG_PATTERN = r'(?P<image>[^:]+)(:)?(?P<tag>[^/:]*)'
-PORT_PATTERN = r'(?P<source>\d+):(?P<dest>\d+)'
-
 
 @click.group()
 def cli():
     pass
-
-
-@click.command()
-def clean():
-    run_clean()
 
 
 @click.command()
@@ -38,48 +29,36 @@ def network():
 @click.command()
 @click.argument('image_name')
 def pull(image_name):
-    match = re.match(IMAGE_TAG_PATTERN, image_name)
-    if not match:
-        print('invalid args')
-        sys.exit(1)
-    image = match.group('image')
-    tag = match.group('tag') if match.group('tag') else 'latest'
-    run_pull(image, tag)
+    registry, image, tag = fmt.parse_image_opt(image_name)
+    run_pull(registry, image, tag)
 
 
 @click.command(context_settings={'ignore_unknown_options': True})
-@click.argument('image_name', required=True)
+@click.argument('image_name')
 @click.option('--cpus', help='Number of CPUs', default=None, type=float)
 @click.option('--memory', help='Memory limit in bytes.', default=None)
 @click.option('--port', help='Port forwarding <source>:<dest>', default=None)
 @click.argument('command', nargs=-1)
 def run(image_name, cpus, memory, port, command):
-    match = re.match(IMAGE_TAG_PATTERN, image_name)
-    if not match:
-        print('invalid image name')
-        sys.exit(1)
-    image = match.group('image')
-    tag = match.group('tag') if match.group('tag') else 'latest'
-
+    registry, image, tag = fmt.parse_image_opt(image_name)
     source = None
     dest = None
     if port:
-        match = re.match(PORT_PATTERN, port)
+        match = re.match(fmt.PORT_PATTERN, port)
         if not match:
             print('invalid port')
             sys.exit(1)
 
         source = int(match.group('source'))
         dest = int(match.group('dest'))
+    run_run(registry, image, tag, cpus, memory, source, dest, command)
 
-    run_run(image, tag, cpus, memory, source, dest, command)
 
-
-cli.add_command(clean)
 cli.add_command(images)
 cli.add_command(pull)
 cli.add_command(network)
 cli.add_command(run)
+
 
 if __name__ == '__main__':
     cli()
